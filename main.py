@@ -1,5 +1,10 @@
 import random
-from collections import deque, Counter
+import yaml
+import os
+from collections import deque, Counter, defaultdict
+
+STATS_FILE = "rps_stats.yaml"
+ADAPTIVE_MEMORY_FILE = "adaptive_memory.yaml"
 
 class RPS_AI:
     def __init__(self, memory=5, mode="human", personality="adaptive"):
@@ -11,10 +16,31 @@ class RPS_AI:
         self.moves = ["rock", "paper", "scissors"]
         self.beats = {"rock": "scissors", "scissors": "paper", "paper": "rock"}
         self.loses_to = {v: k for k, v in self.beats.items()}
+        self.pattern_counts = defaultdict(Counter)
+
+        if self.personality == "adaptive":
+            self.load_adaptive_memory()
 
     def record_round(self, my_move, opponent_move):
         self.my_moves.append(my_move)
         self.opponent_moves.append(opponent_move)
+
+        if len(self.opponent_moves) >= 3:
+            pattern = tuple(list(self.opponent_moves)[-3:-1])
+            next_move = self.opponent_moves[-1]
+            self.pattern_counts[pattern][next_move] += 1
+
+    def next_move(self):
+        if self.mode == "optimal":
+            return self.yellow_hat_predict()
+        return self.simulate_human_opponent()
+
+    def evaluate_result(self, player, opponent):
+        if self.beats[player] == opponent:
+            return "win"
+        elif self.beats[opponent] == player:
+            return "loss"
+        return "tie"
 
     def simulate_human_opponent(self):
         if not self.my_moves:
@@ -25,112 +51,150 @@ class RPS_AI:
 
         if self.personality == "aggressive":
             if last_opp and self.beats[last_opp] == last_my:
-                return last_opp
-            return "rock"
-
+                if random.randint(1, 3) == 2 or 3:
+                    return last_opp
+                return random.choice(self.moves)
+            return random.choice(self.moves)
         elif self.personality == "copycat":
             return last_my
-
         elif self.personality == "static":
             return "rock"
-
         elif self.personality == "adaptive":
             return self.loses_to.get(last_my, random.choice(self.moves))
 
         return random.choice(self.moves)
 
     def yellow_hat_predict(self):
-        if not self.opponent_moves:
-            return random.choice(self.moves)
+        if len(self.opponent_moves) >= 2:
+            recent = tuple(list(self.opponent_moves)[-2:])
+            if recent in self.pattern_counts:
+                predicted = self.pattern_counts[recent].most_common(1)[0][0]
+                return self.beats[predicted]
+        if self.opponent_moves:
+            most_common = Counter(self.opponent_moves).most_common(1)[0][0]
+            return self.beats[most_common]
+        return random.choice(self.moves)
 
-        most_common = Counter(self.opponent_moves).most_common(1)[0][0]
-        missing = set(self.moves) - set(self.opponent_moves)
+    def save_adaptive_memory(self):
+        if self.personality != "adaptive":
+            return
+        serializable = {str(k): dict(v) for k, v in self.pattern_counts.items()}
+        with open(ADAPTIVE_MEMORY_FILE, "w") as f:
+            yaml.dump(serializable, f)
 
-        if missing:
-            likely = most_common
-        else:
-            last_opponent = self.opponent_moves[-1]
-            last_mine = self.my_moves[-1] if self.my_moves else None
-            if last_opponent == self.beats.get(last_mine):
-                likely = last_opponent
-            else:
-                likely = self.beats.get(last_opponent)
+    def load_adaptive_memory(self):
+        if not os.path.exists(ADAPTIVE_MEMORY_FILE):
+            return
+        with open(ADAPTIVE_MEMORY_FILE, "r") as f:
+            data = yaml.safe_load(f) or {}
+        for k, v in data.items():
+            # Clean tuple string format and parse into a tuple
+            pattern = tuple(k.strip("()").replace("'", "").split(", "))
+            self.pattern_counts[pattern] = Counter(v)
 
-        return self.beats[likely]
+# --- Persistent Stats ---
 
-    def next_move(self):
-        if self.mode == "optimal":
-            return self.yellow_hat_predict()
-        return self.simulate_human_opponent()
+def load_stats():
+    if os.path.exists(STATS_FILE):
+        with open(STATS_FILE, "r") as f:
+            return yaml.safe_load(f) or {"wins": 0, "losses": 0, "ties": 0}
+    return {"wins": 0, "losses": 0, "ties": 0}
 
-    def evaluate_result(self, player, opponent):
-        if self.beats[player] == opponent:
-            return "Player wins!"
-        elif self.beats[opponent] == player:
-            return "AI wins!"
-        return "It's a tie!"
+def save_stats(stats):
+    with open(STATS_FILE, "w") as f:
+        yaml.dump(stats, f)
 
-    def play_round(self, my_move):
-        opponent_move = self.next_move()
-        self.record_round(my_move, opponent_move)
-        return opponent_move, self.evaluate_result(my_move, opponent_move)
+def reset_stats():
+    stats = {"wins": 0, "losses": 0, "ties": 0}
+    save_stats(stats)
+    return stats
 
-def play_against_both():
-    print("\nChoose human-like AI personality: [aggressive, copycat, static, adaptive]")
-    personality_input = input("Enter personality: ").strip().lower()
-    if personality_input not in ["aggressive", "copycat", "static", "adaptive"]:
-        print("Invalid personality. Defaulting to adaptive.")
-        personality_input = "adaptive"
+# --- Match Logic ---
 
-    human_like_ai = RPS_AI(mode="human", personality=personality_input)
-    optimal_ai = RPS_AI(mode="optimal")
+def run_match(ai, rounds, stats):
+    player_score = 0
+    ai_score = 0
+    print(f"\nBest-of-{rounds} match. First to {rounds // 2 + 1} wins.")
+    print("Type 'reset' to clear your stats and adaptive AI memory.\n")
 
-    while True:
-        player_move = input("\nYour move (rock/paper/scissors or q to quit): ").strip().lower()
-        if player_move == 'q':
-            print("Exiting game.")
-            break
-        if player_move not in human_like_ai.moves:
-            print("Invalid move.")
+    while player_score < rounds // 2 + 1 and ai_score < rounds // 2 + 1:
+        move = input("Your move (rock/paper/scissors): ").strip().lower()
+        if move == 'reset':
+            stats = reset_stats()
+            if ai.personality == "adaptive" and os.path.exists(ADAPTIVE_MEMORY_FILE):
+                os.remove(ADAPTIVE_MEMORY_FILE)
+                print("Adaptive AI memory has been cleared.")
+            print("Statistics have been reset.")
+            continue
+        if move not in ai.moves:
+            print("Invalid move. Please try again.")
             continue
 
-        move_human_ai, result_human = human_like_ai.play_round(player_move)
-        move_optimal_ai, result_optimal = optimal_ai.play_round(player_move)
+        ai_move = ai.next_move()
+        ai.record_round(move, ai_move)
+        result = ai.evaluate_result(move, ai_move)
 
-        print(f"\nHuman-like AI ({personality_input}) played: {move_human_ai} => {result_human}")
-        print(f"Optimal AI played: {move_optimal_ai} => {result_optimal}")
+        if result == "win":
+            player_score += 1
+        elif result == "loss":
+            ai_score += 1
 
-if __name__ == "__main__":
-    print("Yellow Hat Logic RPS AI")
-    print("[1] Play against one AI\n[2] Play against both AIs")
-    mode_choice = input("Enter 1 or 2: ").strip()
+        print(f"AI played: {ai_move} — Result: {result}")
+        print(f"Current score: You {player_score} | AI {ai_score}")
 
-    if mode_choice == "1":
-        print("Choose AI type: [1] Human-like [2] Optimal")
-        ai_type = input("Enter 1 or 2: ").strip()
-        mode = "human" if ai_type == "1" else "optimal"
+    if player_score > ai_score:
+        print("\nYou won the match.")
+        stats["wins"] += 1
+    else:
+        print("\nThe AI won the match.")
+        stats["losses"] += 1
+
+    if ai.personality == "adaptive":
+        ai.save_adaptive_memory()
+
+    return stats
+
+# --- Game Entry Point ---
+
+def game():
+    stats = load_stats()
+
+    while True:
+        print("\nChoose AI Type:\n[1] Human-like\n[2] Optimal")
+        mode_choice = input("Enter 1 or 2: ").strip()
+        mode = "human" if mode_choice == "1" else "optimal"
 
         personality = "adaptive"
         if mode == "human":
-            print("Choose personality: [aggressive, copycat, static, adaptive]")
+            print("Choose personality: aggressive, copycat, static, adaptive")
             personality_input = input("Enter personality: ").strip().lower()
             if personality_input in ["aggressive", "copycat", "static", "adaptive"]:
                 personality = personality_input
+            else:
+                print("Invalid personality. Defaulting to adaptive.")
 
         ai = RPS_AI(mode=mode, personality=personality)
 
         while True:
-            player_move = input("\nYour move (rock/paper/scissors or q to quit): ").strip().lower()
-            if player_move == 'q':
+            rounds_input = input("Choose match format (3 or 5 rounds): ").strip()
+            if rounds_input in ["3", "5"]:
+                rounds = int(rounds_input)
                 break
-            if player_move not in ai.moves:
-                print("Invalid move.")
-                continue
+            else:
+                print("Please enter 3 or 5.")
 
-            opponent_move, result = ai.play_round(player_move)
-            print(f"AI played: {opponent_move} => {result}")
+        stats = run_match(ai, rounds, stats)
 
-    elif mode_choice == "2":
-        play_against_both()
-    else:
-        print("Invalid selection.")
+        if len(ai.opponent_moves) >= 2:
+            save_stats(stats)
+            print(f"\nCumulative Optimal AIStatistics:")
+            print(f"Wins:   {stats['wins']}")
+            print(f"Losses: {stats['losses']}")
+
+        play_again = input("\nWould you like to play another match? (y/n): ").strip().lower()
+        if play_again != 'y':
+            break
+
+if __name__ == "__main__":
+    print("Yellow Hat Logic RPS AI")
+    game()

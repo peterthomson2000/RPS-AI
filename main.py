@@ -58,7 +58,7 @@ class RPS_AI:
         elif self.personality == "copycat":
             return last_my
         elif self.personality == "static":
-            return "rock"
+            return random.choice(self.moves)
         elif self.personality == "adaptive":
             return self.loses_to.get(last_my, random.choice(self.moves))
 
@@ -97,15 +97,15 @@ class RPS_AI:
 def load_stats():
     if os.path.exists(STATS_FILE):
         with open(STATS_FILE, "r") as f:
-            return yaml.safe_load(f) or {"wins": 0, "losses": 0, "ties": 0}
-    return {"wins": 0, "losses": 0, "ties": 0}
+            return yaml.safe_load(f) or {"wins": 0, "losses": 0}
+    return {"wins": 0, "losses": 0}
 
 def save_stats(stats):
     with open(STATS_FILE, "w") as f:
         yaml.dump(stats, f)
 
 def reset_stats():
-    stats = {"wins": 0, "losses": 0, "ties": 0}
+    stats = {"wins": 0, "losses": 0}
     save_stats(stats)
     return stats
 

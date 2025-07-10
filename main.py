@@ -115,17 +115,9 @@ def run_match(ai, rounds, stats):
     player_score = 0
     ai_score = 0
     print(f"\nBest-of-{rounds} match. First to {rounds // 2 + 1} wins.")
-    print("Type 'reset' to clear your stats and adaptive AI memory.\n")
 
     while player_score < rounds // 2 + 1 and ai_score < rounds // 2 + 1:
         move = input("Your move (rock/paper/scissors): ").strip().lower()
-        if move == 'reset':
-            stats = reset_stats()
-            if ai.personality == "adaptive" and os.path.exists(ADAPTIVE_MEMORY_FILE):
-                os.remove(ADAPTIVE_MEMORY_FILE)
-                print("Adaptive AI memory has been cleared.")
-            print("Statistics have been reset.")
-            continue
         if move not in ai.moves:
             print("Invalid move. Please try again.")
             continue
